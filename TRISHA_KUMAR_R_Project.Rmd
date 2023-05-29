@@ -1,0 +1,346 @@
+---
+title: "R Project"
+author: "Trisha Kumar"
+date: "May, 2022"
+output:
+  html_document:
+  theme: yeti
+toc: yes
+number_sections: yes
+toc_float:
+  collapsed: no
+subtitle: Finance and Data Analysis with R 
+---
+
+Note: ChatGPT was used for this project
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Install Packages
+
+```{r CRAN_mirror, eval = FALSE}
+# chooseCRANmirror()
+chooseCRANmirror(ind = 1)    # Set downloading location
+```
+
+```{r packages, message = FALSE, warning = FALSE, results = "hide", eval = FALSE}
+install.packages("tidyverse") # Install (download) package: only once
+```
+
+```{r load, message = FALSE, warning = FALSE, results = "hide"}
+library(tidyverse)            # Activate: each time you launch RStudio
+```
+
+
+
+## Import Data
+
+```{r} 
+# Reading the CSV file
+data <- read.csv("data.csv")
+head(data)
+
+dim(data)
+```
+
+
+## Exploratory Data Analysis
+
+### Checking column names
+
+
+```{r}
+names(data)
+```
+### Data Cleaning
+There were a lot of special characters in the column names that, and so the following code cleans the names by replacing the "." with spaces, so that it's easier to read 
+
+```{r} 
+# Clean the column names - replace periods with underscores
+cleaned_names <- gsub("\\.", " ", names(data))
+
+# Clean the column names - replace multiple underscores with a single underscore
+cleaned_names <- gsub("\\_+", " ", cleaned_names)
+```
+```{r} 
+# Assign the cleaned names back to the data frame
+names(data) <- cleaned_names
+
+```
+
+```{r}
+head(data)
+```
+## Inspecting missing values
+
+```{r}
+missing_values <- is.na(data)
+
+missing_counts <- colSums(missing_values)
+
+print(missing_counts)
+```
+From this inspection, we can see that there are no missing values in the data, and so we don't have to impute any values
+
+
+## Checking the balance of target column
+
+The target column of this dataset is a binary column that is largely imbalanced. There are significantly more data points in class 0 than in class 1, which means the minority class is likely to be underepresented when we train our models - which means we need to balance the dataset
+
+```{r}
+library(ggplot2)
+
+# Create a data frame with the counts of each unique value
+df_counts <- as.data.frame(table(data$Bankrupt))
+print(df_counts)
+
+```
+
+```{r}
+# Plot the distribution using a bar plot
+ggplot(df_counts, aes(x = Var1, y = Freq)) +
+  geom_bar(stat = "identity", fill = "skyblue", width = 0.5) +
+  labs(x = "Bankrupt_", y = "Count") +
+  ggtitle("Distribution of Bankrupt Column")
+
+```
+
+```{r}
+names(data)
+```
+```{r}
+colnames(data)[colnames(data) == "Bankrupt "] <- "Bankrupt"
+```
+
+
+## Dimensionality Reduction
+
+We can see that the dataset has a lot of features, and so I wanted to reduce the dimension the feature set. To do this, I first evaluated the correlation between the features and the target column, using the Pearson correlation coefficient, which measures the linear relationship between two variables. To visualize the correlation results, I created a bar plot to understand the kind of correlation that existed between the different features and the target column. From the graph, I could see that there were only a few variables that had a correlation value greater or equal to 0.05, and so since these features have a significant relationship with the target column, I chose to subset the dataset, with these features, for further analysis and eventually the modelling. 
+
+```{r}
+company_corr <- cor(data, use = "pairwise.complete.obs", method = "pearson")
+
+
+company_corr <- data.frame(Bankrupt = company_corr[,'Bankrupt'])
+
+
+indices_to_remove <- c('Liability-Assets Flag', 'Net Income Flag', 'Bankrupt')
+company_corr <- company_corr[!(rownames(company_corr) %in% indices_to_remove), , drop = FALSE]
+
+
+barplot(company_corr$Bankrupt, names.arg = rownames(company_corr), 
+         ylab = "Correlation with Bankruptcy", xlab = NULL, 
+         main = "Pearson correlation with Bankruptcy",
+         col = "steelblue", cex.names = 0.8)
+```
+We can see that a lot of features have a negative correlation
+
+```{r}
+# Calculate the correlation matrix
+corr_matrix <- cor(data)
+
+# Sort the correlations with the "Bankrupt_" column in descending order
+cor_with_bankrupt <- sort(corr_matrix[,"Bankrupt"], decreasing = TRUE)
+
+# Print the top correlated features
+top_correlated_features <- names(cor_with_bankrupt)[cor_with_bankrupt > 0.05]
+print(top_correlated_features)
+
+```
+
+
+
+
+
+```{r}
+#Creating a new subset df, containing only the top correlated features
+df_subset <- data[, c(top_correlated_features, "Bankrupt")]
+```
+
+
+```{r}
+df_subset
+```
+
+```{r}
+num_columns <- ncol(df_subset)
+print(num_columns)
+print(dim(df_subset))
+```
+
+
+The final subset data set contains 18 features, as opposed to 96.
+
+
+## Handling the imbalance 
+
+
+To handle the imbalance in the dataset, I chose to use SMOTE as my oversampling strategy to create synthetic data points to augment the minority class. Below is a test to see how it would work, and I will then apply this code to only the training set after splitting - to avoid any data leakage into the test set. 
+
+
+```{r}
+install.packages("smotefamily")
+```
+
+
+```{r}
+
+library(smotefamily)
+
+# Split the dataset into features and the target variable
+features <- df_subset[, -which(names(df_subset) == "Bankrupt")]
+target <- df_subset$Bankrupt
+
+# Convert the target variable to a factor
+target <- as.factor(target)
+
+# Apply SMOTE to oversample the minority class
+oversampled_data <- SMOTE(features, target)
+
+oversampled_df <- oversampled_data$data
+head(oversampled_df)
+
+```
+```{r}
+table(oversampled_df$Bankrupt)
+```
+
+
+
+
+## Modelling
+
+
+### Train - Test Split
+
+
+```{r}
+install.packages("caret")
+```
+
+
+```{r}
+# Load the caret package
+
+library(caret)
+target <- df_subset$Bankrupt
+# Split the dataset into training and testing sets
+set.seed(123)  # Set a seed for reproducibility
+trainIndex <- createDataPartition(target, p = 0.7, list = FALSE)  # 70% for training
+trainData <- df_subset[trainIndex, ]  # Training data
+testData <- df_subset[-trainIndex, ]  # Testing data
+
+```
+
+
+```{r}
+trainFeatures <- trainData[, -which(names(trainData) == "Bankrupt")]
+trainTarget <- trainData$Bankrupt_
+
+```
+
+## Balancing only the train set
+
+
+```{r}
+
+library(smotefamily)
+
+# Split the dataset into features and the target variable
+features <- trainData[, -which(names(df_subset) == "Bankrupt")]
+target <- trainData$Bankrupt
+
+# Convert the target variable to a factor
+target <- as.factor(target)
+
+# Apply SMOTE to oversample the minority class
+oversampled_data <- SMOTE(features, target)
+
+train_oversampled <- oversampled_data$data
+
+head(train_oversampled)
+
+```
+```{r}
+# Change column name from 'Bankrupt_.1' to 'Bankrupt'
+colnames(train_oversampled)[colnames(train_oversampled) == 'Bankrupt.1'] <- 'Bankrupt'
+# Rename the column 'class' to 'Bankrupt'
+colnames(train_oversampled)[colnames(train_oversampled) == 'class'] <- 'Bankrupt'
+
+
+```
+
+```{r}
+#Here, I verify that the target distrubtion is balanced
+table(train_oversampled$Bankrupt)
+```
+```{r}
+train_oversampled
+```
+
+
+Now that my train set is balanced, I will train a classification model to predict the target
+
+## Logistic Regression Model
+
+
+```{r}
+
+library(caret)
+
+# Train the logistic regression model
+logistic_model <- glm(Bankrupt ~ ., data = train_oversampled, family = "binomial")
+
+# Make predictions on the test data
+predictions <- predict(logistic_model, newdata = testData, type = "response")
+
+# Convert probabilities to binary predictions
+predictions <- as.factor(ifelse(predictions > 0.5, 1, 0))
+
+# Assuming you have the predicted values and actual values stored in variables
+actual <- testData$Bankrupt
+
+# Assuming you have the predicted values and actual values stored in variables
+predictions <- as.factor(predictions)
+actual <- as.factor(actual)
+
+# Ensure both variables have the same levels
+levels(predictions) <- levels(actual)
+
+# Create a confusion matrix
+confusion <- confusionMatrix(predictions, actual)
+
+# Print overall accuracy
+accuracy <- confusion$overall["Accuracy"]
+cat("Accuracy:", accuracy, "\n")
+
+# Print precision, recall, and F1-score for each class
+class_metrics <- confusion$byClass[c("Precision", "Recall", "F1")]
+print(class_metrics)
+
+
+```
+```{r}
+# Create a confusion matrix
+confusion <- confusionMatrix(predictions, actual)
+
+# Print the confusion matrix
+print(confusion)
+```
+From my evaluation metrics, I can see from the accuracy of 0.86 and the F1 score of 0.21, that my model is performing very well. The precision and recall scores indicate that the model is able to predict class 0 very well, and this is further demonstrated in the confusion matrix - where it is clear that the model is bias towards class 0. We can anticipate that, based on our understanding of the bias of the data set. If the data set had been balanced prior to splitting into train and test, the metrics would have shown a more balanced result, however, in this case I only balanced the train set and then used the model on an unbalanced test set. Therefore, if the confusion matrix on the test set is imbalanced, it can be a good representation of the real-world distribution. This imbalance in the confusion matrix reflects the actual distribution of the classes of potential bankruptcy in the test set and potentially in the real-world scenarios where the model will be deployed.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
